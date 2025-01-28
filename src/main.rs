@@ -1,7 +1,7 @@
 use std::{fs, io, sync::Arc};
 
 use hyper_util::{
-    rt::{TokioExecutor, TokioIo, TokioTimer},
+    rt::{TokioExecutor, TokioIo},
     server::conn::auto,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -14,24 +14,12 @@ async fn main() {
     let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
 
     loop {
-        let (tcp_stream, _addr) = match listener.accept().await {
-            Ok((stream, addr)) => (stream, addr),
-            Err(err) => {
-                eprintln!("failed to accept connection: {}", err);
-                continue;
-            }
-        };
+        let (tcp_stream, _addr) = listener.accept().await.unwrap();
         println!("accepted tcp connection");
 
-        let stream = match tls_acceptor.accept(tcp_stream).await {
-            Ok(stream) => stream,
-            Err(err) => {
-                eprintln!("failed to accept TLS connection: {}", err);
-                continue;
-            }
-        };
-
+        let stream = tls_acceptor.accept(tcp_stream).await.unwrap();
         println!("accepted tls connection");
+
         let io = TokioIo::new(stream);
 
         // You can manually read the preface here
@@ -50,10 +38,6 @@ async fn main() {
         tokio::spawn(async move {
             println!("handling connection");
             let res = auto::Builder::new(TokioExecutor::new())
-                .http1()
-                .timer(TokioTimer::new())
-                .http2()
-                .timer(TokioTimer::new())
                 .serve_connection(io, hyper_service)
                 .await;
 
@@ -63,7 +47,9 @@ async fn main() {
 }
 
 pub fn get_server_config() -> rustls::ServerConfig {
-    rustls::crypto::aws_lc_rs::default_provider().install_default().unwrap();
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .unwrap();
 
     let certs = load_certs("fullchain.pem").unwrap();
     let key = load_private_key("privkey.pem").unwrap();
@@ -73,11 +59,7 @@ pub fn get_server_config() -> rustls::ServerConfig {
         .with_single_cert(certs, key)
         .unwrap();
     server_config.max_early_data_size = u32::MAX;
-    server_config.alpn_protocols = vec![
-        b"h2".to_vec(),
-        b"http/1.1".to_vec(),
-        b"http/1.0".to_vec(),
-    ];
+    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
     server_config
 }
